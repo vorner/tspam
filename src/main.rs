@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr};
 use std::path::PathBuf;
@@ -5,7 +6,9 @@ use std::process;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use err_derive::Error;
 use log::{debug, error, info, warn};
+use once_cell::sync::Lazy;
 use structopt::StructOpt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
@@ -13,7 +16,12 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::timer;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+const TIMEOUT: Duration = Duration::from_secs(15);
+static RUNTIME: Lazy<Runtime> = Lazy::new(|| Runtime::new().unwrap());
+
+#[derive(Debug, Error)]
+#[error(display = "No samples")]
+struct NoSamples;
 
 /// The TCP spammer.
 #[derive(StructOpt)]
@@ -24,21 +32,62 @@ enum Command {
     /// back, then closes the connection.
     Server {
         /// The port to listen on.
-        #[structopt(short = "p", long = "port")]
+        #[structopt(short = "p", long = "port", default_value = "2345")]
         port: u16,
         /// File with a content to send back. Nothing sent if missing.
         #[structopt(short = "c", long = "content", parse(from_os_str))]
         content: Option<PathBuf>,
     },
+    /// Run in client mode, with provided rates to test with.
+    ///
+    /// Computes some statistics about latencies.
     Rate {
-        #[structopt(short = "h", long = "host")]
+        /// The host to connect to.
+        #[structopt(short = "h", long = "host", default_value = "127.0.0.1")]
         host: IpAddr,
-        #[structopt(short = "p", long = "port")]
+        /// The port to connect to.
+        #[structopt(short = "p", long = "port", default_value = "2345")]
         port: u16,
+        /// The rate.
+        ///
+        /// Number of new connections started each second. Can be specified multiple times, in
+        /// which case it'll run test with each.
         #[structopt(short = "r", long = "rate")]
         rate: Vec<u32>,
+        /// The content to send to the server. Empty if missing.
         #[structopt(short = "c", long = "content", parse(from_os_str))]
         content: Option<PathBuf>,
+        /// Length of each test, in seconds.
+        #[structopt(short = "l", long = "length", default_value = "10")]
+        length: u32,
+    },
+    /// Find the rate of connections at which the link saturates.
+    ///
+    /// Increases the rate of new connections in steps, until the last median is significantly
+    /// worse than the previous step.
+    Saturate {
+        /// The host to connect to.
+        #[structopt(short = "h", long = "host", default_value = "127.0.0.1")]
+        host: IpAddr,
+        /// The port to connect to.
+        #[structopt(short = "p", long = "port", default_value = "2345")]
+        port: u16,
+        /// The rate to start at.
+        #[structopt(short = "r", long = "start", default_value = "50")]
+        start_rate: u32,
+        /// Multiplication factor by which each step's rate is higher than the previous.
+        #[structopt(short = "i", long = "increment", default_value = "1.25")]
+        increment_factor: f64,
+        /// A multiplication factor by which the current mean latency must be worse than the
+        /// previous one to consider it a saturation.
+        #[structopt(short = "s", long = "slowdown", default_value = "2")]
+        slowdown_factor: f64,
+        /// The content to send to the server.
+        #[structopt(short = "c", long = "content", parse(from_os_str))]
+        content: Option<PathBuf>,
+        /// Length of each test, in seconds.
+        #[structopt(short = "l", long = "length", default_value = "10")]
+        length: u32,
     },
 }
 
@@ -63,8 +112,7 @@ async fn handle_conn(addr: SocketAddr, connection: TcpStream, content: Arc<[u8]>
 
 fn run_server(port: u16, content: Vec<u8>) -> Result<(), Error> {
     let content: Arc<[u8]> = Arc::from(content);
-    let rt = Runtime::new()?;
-    rt.block_on(async {
+    RUNTIME.block_on(async {
         let mut listener = TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), port)).await?;
         loop {
             match listener.accept().await {
@@ -126,29 +174,49 @@ async fn generator(
     debug!("Generator terminated");
 }
 
-fn run_rate(server: SocketAddr, rate: u32, cnt: u32, content: Arc<[u8]>) -> Result<(), Error> {
-    let rt = Runtime::new()?;
-    rt.block_on(async {
+struct Latency {
+    rate: u32,
+    samples: usize,
+    min: Duration,
+    max: Duration,
+    mean: Duration,
+    p90: Duration,
+}
+
+impl Display for Latency {
+    fn fmt(&self, fmt: &mut Formatter) -> FmtResult {
+        write!(
+            fmt,
+            "Rate {} ({} samples):\tmin {:?},\tmax {:?},\tmean: {:?},\t90th: {:?}",
+            self.rate, self.samples, self.min, self.max, self.mean, self.p90
+        )
+    }
+}
+
+fn run_rate(
+    server: SocketAddr,
+    rate: u32,
+    cnt: u32,
+    content: Arc<[u8]>,
+) -> Result<Result<Latency, NoSamples>, Error> {
+    RUNTIME.block_on(async {
         let (sender, receiver) = mpsc::channel(10);
         tokio::spawn(generator(server, rate, cnt, content, sender));
         // TODO: Better computation of stats
         let mut results: Vec<Duration> = receiver.collect().await;
         results.sort();
         if results.is_empty() {
-            error!("No results for rate {}", rate);
+            Ok(Err(NoSamples))
         } else {
-            // TODO: extract the part that runs the stuff, so we can base saturation on it.
-            println!(
-                "Rate {} ({} samples): min {:?}, max {:?}, mean: {:?}, 90th: {:?}",
+            Ok(Ok(Latency {
                 rate,
-                results.len(),
-                results[0],
-                results[results.len() - 1],
-                results[results.len() / 2],
-                results[results.len() * 9 / 10]
-            );
+                samples: results.len(),
+                min: results[0],
+                max: results[results.len() - 1],
+                mean: results[results.len() / 2],
+                p90: results[results.len() * 9 / 10],
+            }))
         }
-        Ok(())
     })
 }
 
@@ -165,14 +233,58 @@ fn run() -> Result<(), Error> {
             port,
             rate,
             content,
+            length,
         } => {
             let content = Arc::from(get_content(content)?);
             let sockaddr = SocketAddr::new(host, port);
             for rate in rate {
                 info!("Running client to {} with rate {}", sockaddr, rate);
-                // TODO: Length
+                let start = Instant::now();
                 // TODO: Pauses in between
-                run_rate(sockaddr, rate, rate * 10, Arc::clone(&content))?;
+                match run_rate(sockaddr, rate, rate * length, Arc::clone(&content))? {
+                    Ok(rate) => println!("{}", rate),
+                    Err(NoSamples) => warn!("No samples for rate {}", rate),
+                }
+                info!("Step took {:?}", start.elapsed());
+            }
+        }
+        Command::Saturate {
+            host,
+            port,
+            start_rate,
+            increment_factor,
+            slowdown_factor,
+            content,
+            length,
+        } => {
+            let content = Arc::from(get_content(content)?);
+            let sockaddr = SocketAddr::new(host, port);
+            info!(
+                "Running base client to {} with rate {}",
+                sockaddr, start_rate
+            );
+            let mut prev = run_rate(
+                sockaddr,
+                start_rate,
+                start_rate * length,
+                Arc::clone(&content),
+            )??;
+            println!("Base {}", prev);
+            for step in 2.. {
+                let rate = (increment_factor.powi(step) * f64::from(start_rate)).round() as u32;
+                info!("Running step {} with rate {}", step, rate);
+                let start = Instant::now();
+                let lat = run_rate(sockaddr, rate, rate * length, Arc::clone(&content))??;
+                info!("Step {} took {:?}", step, start.elapsed());
+                if lat.mean >= TIMEOUT
+                    || prev.mean.as_secs_f64() * slowdown_factor < lat.mean.as_secs_f64()
+                {
+                    println!("Saturated at {}", lat);
+                    break;
+                } else {
+                    println!("{}", lat);
+                    prev = lat;
+                }
             }
         }
     }

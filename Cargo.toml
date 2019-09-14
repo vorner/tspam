@@ -8,6 +8,8 @@ edition = "2018"
 
 [dependencies]
 env_logger = "~0.6"
+err-derive = "~0.1"
 log = "~0.4"
+once_cell = "~1"
 structopt = "~0.3"
 tokio = { version = "0.2.0-alpha.4", default-features = false, features = ["timer", "sync", "net", "rt-full"] }
