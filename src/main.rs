@@ -1,9 +1,12 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs;
+use std::io::Error as IoError;
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr};
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::process;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use err_derive::Error;
@@ -97,9 +100,26 @@ fn get_content(content: Option<PathBuf>) -> Result<Vec<u8>, Error> {
     Ok(content.map(fs::read).transpose()?.unwrap_or_default())
 }
 
+struct Sink;
+
+impl AsyncWrite for Sink {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _: &mut Context,
+        buf: &[u8],
+    ) -> Poll<Result<usize, IoError>> {
+        Poll::Ready(Ok(buf.len()))
+    }
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context) -> Poll<Result<(), IoError>> {
+        Poll::Ready(Ok(()))
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context) -> Poll<Result<(), IoError>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
 async fn handle_conn_inner(mut connection: TcpStream, content: Arc<[u8]>) -> Result<(), Error> {
-    let mut buffer = Vec::new();
-    connection.read_to_end(&mut buffer).await?;
+    connection.copy(&mut Sink).await?;
     connection.write_all(&content).await?;
     Ok(())
 }
@@ -133,8 +153,7 @@ async fn connect_inner(server: SocketAddr, content: Arc<[u8]>) -> Result<Duratio
     let mut connection = TcpStream::connect(server).await?;
     connection.write_all(&content).await?;
     connection.shutdown(Shutdown::Write)?;
-    let mut data = Vec::new();
-    connection.read_to_end(&mut data).await?;
+    connection.copy(&mut Sink).await?;
     Ok(start.elapsed())
 }
 
