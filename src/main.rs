@@ -5,15 +5,13 @@ use std::process;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use async_std::io;
-use async_std::net::{TcpListener, TcpStream};
-use async_std::task;
-use futures::channel::mpsc::{self, Sender};
-use futures::future::{self, Either};
-use futures::pin_mut;
-use futures::prelude::*;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, warn};
 use structopt::StructOpt;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::prelude::*;
+use tokio::runtime::Runtime;
+use tokio::sync::mpsc::{self, Sender};
+use tokio::timer;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -38,7 +36,7 @@ enum Command {
         #[structopt(short = "p", long = "port")]
         port: u16,
         #[structopt(short = "r", long = "rate")]
-        rate: Vec<usize>,
+        rate: Vec<u32>,
         #[structopt(short = "c", long = "content", parse(from_os_str))]
         content: Option<PathBuf>,
     },
@@ -51,7 +49,8 @@ fn get_content(content: Option<PathBuf>) -> Result<Vec<u8>, Error> {
 }
 
 async fn handle_conn_inner(mut connection: TcpStream, content: Arc<[u8]>) -> Result<(), Error> {
-    io::copy(&mut connection, &mut io::sink()).await?;
+    let mut buffer = Vec::new();
+    connection.read_to_end(&mut buffer).await?;
     connection.write_all(&content).await?;
     Ok(())
 }
@@ -64,13 +63,14 @@ async fn handle_conn(addr: SocketAddr, connection: TcpStream, content: Arc<[u8]>
 
 fn run_server(port: u16, content: Vec<u8>) -> Result<(), Error> {
     let content: Arc<[u8]> = Arc::from(content);
-    task::block_on(async {
-        let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await?;
+    let rt = Runtime::new()?;
+    rt.block_on(async {
+        let mut listener = TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), port)).await?;
         loop {
             match listener.accept().await {
                 Ok((connection, address)) => {
                     debug!("Accepted connection from {}", address);
-                    task::spawn(handle_conn(address, connection, Arc::clone(&content)));
+                    tokio::spawn(handle_conn(address, connection, Arc::clone(&content)));
                 }
                 Err(e) => {
                     warn!("Failed to accept connection: {}", e);
@@ -85,22 +85,20 @@ async fn connect_inner(server: SocketAddr, content: Arc<[u8]>) -> Result<Duratio
     let mut connection = TcpStream::connect(server).await?;
     connection.write_all(&content).await?;
     connection.shutdown(Shutdown::Write)?;
-    io::copy(&mut connection, &mut io::sink()).await?;
+    let mut data = Vec::new();
+    connection.read_to_end(&mut data).await?;
     Ok(start.elapsed())
 }
 
 async fn connect(server: SocketAddr, content: Arc<[u8]>, mut results: Sender<Duration>) {
-    let connect = connect_inner(server, content);
-    pin_mut!(connect);
-    let timeout = task::sleep(TIMEOUT);
-    pin_mut!(timeout);
-    match future::select(connect, timeout).await {
-        Either::Left((Ok(duration), _)) => results
+    let connect = connect_inner(server, content).timeout(TIMEOUT);
+    match connect.await {
+        Ok(Ok(duration)) => results
             .send(duration)
             .await
             .expect("Channel prematurely closed"),
-        Either::Left((Err(e), _)) => error!("Connection failed: {}", e),
-        Either::Right(_) => {
+        Ok(Err(e)) => error!("Connection failed: {}", e),
+        Err(_) => {
             warn!("Connection timed out");
             results
                 .send(TIMEOUT)
@@ -113,29 +111,26 @@ async fn connect(server: SocketAddr, content: Arc<[u8]>, mut results: Sender<Dur
 async fn generator(
     server: SocketAddr,
     rate: u32,
-    cnt: usize,
+    cnt: u32,
     content: Arc<[u8]>,
     results: Sender<Duration>,
 ) {
     debug!("Generator started");
     let interval = Duration::from_secs(1) / rate;
-    let mut next = Instant::now();
+    let start = Instant::now();
     for i in 0..cnt {
-        let now = Instant::now();
-        let sleep = next.saturating_duration_since(now);
-        next = now + interval;
-        trace!("Sleeping for {:?}", sleep);
-        task::sleep(sleep).await;
+        timer::delay(start + i * interval).await;
         debug!("Starting connection #{}", i);
-        task::spawn(connect(server, Arc::clone(&content), results.clone()));
+        tokio::spawn(connect(server, Arc::clone(&content), results.clone()));
     }
     debug!("Generator terminated");
 }
 
-fn run_rate(server: SocketAddr, rate: u32, cnt: usize, content: Arc<[u8]>) -> Result<(), Error> {
-    task::block_on(async {
+fn run_rate(server: SocketAddr, rate: u32, cnt: u32, content: Arc<[u8]>) -> Result<(), Error> {
+    let rt = Runtime::new()?;
+    rt.block_on(async {
         let (sender, receiver) = mpsc::channel(10);
-        task::spawn(generator(server, rate, cnt, content, sender));
+        tokio::spawn(generator(server, rate, cnt, content, sender));
         // TODO: Better computation of stats
         let mut results: Vec<Duration> = receiver.collect().await;
         results.sort();
@@ -177,7 +172,7 @@ fn run() -> Result<(), Error> {
                 info!("Running client to {} with rate {}", sockaddr, rate);
                 // TODO: Length
                 // TODO: Pauses in between
-                run_rate(sockaddr, rate as u32, rate * 10, Arc::clone(&content))?;
+                run_rate(sockaddr, rate, rate * 10, Arc::clone(&content))?;
             }
         }
     }
