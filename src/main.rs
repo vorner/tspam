@@ -1,12 +1,14 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs;
 use std::io::Error as IoError;
+use std::mem;
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::process;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use err_derive::Error;
@@ -63,6 +65,9 @@ enum Command {
         /// Length of each test, in seconds.
         #[structopt(short = "l", long = "length", default_value = "10")]
         length: u32,
+        /// Cooldown time (s) between tests,
+        #[structopt(short = "o", long = "cooldown", default_value = "0")]
+        cooldown: u64,
     },
     /// Find the rate of connections at which the link saturates.
     ///
@@ -91,6 +96,9 @@ enum Command {
         /// Length of each test, in seconds.
         #[structopt(short = "l", long = "length", default_value = "10")]
         length: u32,
+        /// A cooldown time (s) in between two tests.
+        #[structopt(short = "o", long = "cooldown", default_value = "0")]
+        cooldown: u64,
     },
 }
 
@@ -253,10 +261,16 @@ fn run() -> Result<(), Error> {
             rate,
             content,
             length,
+            cooldown,
         } => {
             let content = Arc::from(get_content(content)?);
             let sockaddr = SocketAddr::new(host, port);
+            let cooldown = Duration::from_secs(cooldown);
+            let mut first = true;
             for rate in rate {
+                if !mem::replace(&mut first, false) {
+                    thread::sleep(cooldown);
+                }
                 info!("Running client to {} with rate {}", sockaddr, rate);
                 let start = Instant::now();
                 // TODO: Pauses in between
@@ -275,9 +289,11 @@ fn run() -> Result<(), Error> {
             slowdown_factor,
             content,
             length,
+            cooldown,
         } => {
             let content = Arc::from(get_content(content)?);
             let sockaddr = SocketAddr::new(host, port);
+            let cooldown = Duration::from_secs(cooldown);
             info!(
                 "Running base client to {} with rate {}",
                 sockaddr, start_rate
@@ -289,8 +305,9 @@ fn run() -> Result<(), Error> {
                 Arc::clone(&content),
             )??;
             println!("Base {}", prev);
-            for step in 2.. {
+            for step in 1.. {
                 let rate = (increment_factor.powi(step) * f64::from(start_rate)).round() as u32;
+                thread::sleep(cooldown);
                 info!("Running step {} with rate {}", step, rate);
                 let start = Instant::now();
                 let lat = run_rate(sockaddr, rate, rate * length, Arc::clone(&content))??;
