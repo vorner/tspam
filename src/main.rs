@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use err_derive::Error;
 use log::{debug, error, info, warn};
-use net2::TcpBuilder;
 use net2::unix::UnixTcpBuilderExt;
+use net2::TcpBuilder;
 use once_cell::sync::Lazy;
 use structopt::StructOpt;
 use tokio::future;
@@ -75,6 +75,12 @@ enum Command {
         /// Cooldown time (s) between tests,
         #[structopt(short = "o", long = "cooldown", default_value = "0")]
         cooldown: u64,
+        /// Source IP to use.
+        ///
+        /// Can be used multiple times. If so, it is used in a round-robin fashion. If none
+        /// provided, it is left up to the OS to decide.
+        #[structopt(short = "I", long = "local-ip")]
+        local_ips: Vec<IpAddr>,
     },
     /// Find the rate of connections at which the link saturates.
     ///
@@ -106,6 +112,12 @@ enum Command {
         /// A cooldown time (s) in between two tests.
         #[structopt(short = "o", long = "cooldown", default_value = "0")]
         cooldown: u64,
+        /// Source IP to use.
+        ///
+        /// Can be used multiple times. If so, it is used in a round-robin fashion. If none
+        /// provided, it is left up to the OS to decide.
+        #[structopt(short = "I", long = "local-ip")]
+        local_ips: Vec<IpAddr>,
     },
 }
 
@@ -153,7 +165,8 @@ fn run_server(listen: IpAddr, port: u16, content: Vec<u8>) -> Result<(), Error> 
                 IpAddr::V4(_) => TcpBuilder::new_v4()?,
                 IpAddr::V6(_) => TcpBuilder::new_v6()?,
             };
-            let listener = listener.reuse_address(true)?
+            let listener = listener
+                .reuse_address(true)?
                 .reuse_port(true)?
                 .bind((listen, port))?
                 .listen(20480)?;
@@ -177,17 +190,36 @@ fn run_server(listen: IpAddr, port: u16, content: Vec<u8>) -> Result<(), Error> 
     })
 }
 
-async fn connect_inner(server: SocketAddr, content: Arc<[u8]>) -> Result<Duration, Error> {
+async fn connect_inner(
+    server: SocketAddr,
+    content: Arc<[u8]>,
+    ip: Option<IpAddr>,
+) -> Result<Duration, Error> {
     let start = Instant::now();
-    let mut connection = TcpStream::connect(server).await?;
+    let mut connection = match ip {
+        None => TcpStream::connect(server).await?,
+        Some(IpAddr::V4(addr)) => {
+            let stream = TcpBuilder::new_v4()?.bind((addr, 0))?.to_tcp_stream()?;
+            TcpStream::connect_std(stream, &server, &Default::default()).await?
+        }
+        Some(IpAddr::V6(addr)) => {
+            let stream = TcpBuilder::new_v6()?.bind((addr, 0))?.to_tcp_stream()?;
+            TcpStream::connect_std(stream, &server, &Default::default()).await?
+        }
+    };
     connection.write_all(&content).await?;
     connection.shutdown(Shutdown::Write)?;
     connection.copy(&mut Sink).await?;
     Ok(start.elapsed())
 }
 
-async fn connect(server: SocketAddr, content: Arc<[u8]>, mut results: Sender<Duration>) {
-    let connect = connect_inner(server, content).timeout(TIMEOUT);
+async fn connect(
+    server: SocketAddr,
+    content: Arc<[u8]>,
+    ip: Option<IpAddr>,
+    mut results: Sender<Duration>,
+) {
+    let connect = connect_inner(server, content, ip).timeout(TIMEOUT);
     match connect.await {
         Ok(Ok(duration)) => results
             .send(duration)
@@ -209,6 +241,7 @@ async fn generator(
     rate: u32,
     cnt: u32,
     content: Arc<[u8]>,
+    local_ips: Arc<[IpAddr]>,
     results: Sender<Duration>,
 ) {
     debug!("Generator started");
@@ -217,7 +250,12 @@ async fn generator(
     for i in 0..cnt {
         timer::delay(start + i * interval).await;
         debug!("Starting connection #{}", i);
-        tokio::spawn(connect(server, Arc::clone(&content), results.clone()));
+        let ip = if local_ips.is_empty() {
+            None
+        } else {
+            local_ips.get((i as usize) % local_ips.len()).cloned()
+        };
+        tokio::spawn(connect(server, Arc::clone(&content), ip, results.clone()));
     }
     debug!("Generator terminated");
 }
@@ -246,10 +284,11 @@ fn run_rate(
     rate: u32,
     cnt: u32,
     content: Arc<[u8]>,
+    local_ips: Arc<[IpAddr]>,
 ) -> Result<Result<Latency, NoSamples>, Error> {
     RUNTIME.block_on(async {
         let (sender, receiver) = mpsc::channel(10);
-        tokio::spawn(generator(server, rate, cnt, content, sender));
+        tokio::spawn(generator(server, rate, cnt, content, local_ips, sender));
         // TODO: Better computation of stats
         let mut results: Vec<Duration> = receiver.collect().await;
         results.sort();
@@ -272,7 +311,11 @@ fn run() -> Result<(), Error> {
     env_logger::init();
     let command = Command::from_args();
     match command {
-        Command::Server { listen, port, content } => {
+        Command::Server {
+            listen,
+            port,
+            content,
+        } => {
             info!("Starting server on port {}", port);
             run_server(listen, port, get_content(content)?)?;
         }
@@ -283,8 +326,10 @@ fn run() -> Result<(), Error> {
             content,
             length,
             cooldown,
+            local_ips,
         } => {
             let content = Arc::from(get_content(content)?);
+            let local_ips = Arc::from(local_ips);
             let sockaddr = SocketAddr::new(host, port);
             let cooldown = Duration::from_secs(cooldown);
             let mut first = true;
@@ -295,7 +340,13 @@ fn run() -> Result<(), Error> {
                 info!("Running client to {} with rate {}", sockaddr, rate);
                 let start = Instant::now();
                 // TODO: Pauses in between
-                match run_rate(sockaddr, rate, rate * length, Arc::clone(&content))? {
+                match run_rate(
+                    sockaddr,
+                    rate,
+                    rate * length,
+                    Arc::clone(&content),
+                    Arc::clone(&local_ips),
+                )? {
                     Ok(rate) => println!("{}", rate),
                     Err(NoSamples) => warn!("No samples for rate {}", rate),
                 }
@@ -311,8 +362,10 @@ fn run() -> Result<(), Error> {
             content,
             length,
             cooldown,
+            local_ips,
         } => {
             let content = Arc::from(get_content(content)?);
+            let local_ips = Arc::from(local_ips);
             let sockaddr = SocketAddr::new(host, port);
             let cooldown = Duration::from_secs(cooldown);
             info!(
@@ -324,6 +377,7 @@ fn run() -> Result<(), Error> {
                 start_rate,
                 start_rate * length,
                 Arc::clone(&content),
+                Arc::clone(&local_ips),
             )??;
             println!("Base {}", prev);
             for step in 1.. {
@@ -331,7 +385,13 @@ fn run() -> Result<(), Error> {
                 thread::sleep(cooldown);
                 info!("Running step {} with rate {}", step, rate);
                 let start = Instant::now();
-                let lat = run_rate(sockaddr, rate, rate * length, Arc::clone(&content))??;
+                let lat = run_rate(
+                    sockaddr,
+                    rate,
+                    rate * length,
+                    Arc::clone(&content),
+                    Arc::clone(&local_ips),
+                )??;
                 info!("Step {} took {:?}", step, start.elapsed());
                 if lat.mean >= TIMEOUT
                     || prev.mean.as_secs_f64() * slowdown_factor < lat.mean.as_secs_f64()
