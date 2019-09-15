@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs;
 use std::io::Error as IoError;
 use std::mem;
-use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr};
+use std::net::{IpAddr, Shutdown, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::process;
@@ -40,6 +40,9 @@ enum Command {
     /// In server mode, it accepts connections, reads the whole content and sends its own content
     /// back, then closes the connection.
     Server {
+        /// The address to listen on.
+        #[structopt(short = "l", long = "listen", default_value = "0.0.0.0")]
+        listen: IpAddr,
         /// The port to listen on.
         #[structopt(short = "p", long = "port", default_value = "2345")]
         port: u16,
@@ -142,14 +145,17 @@ async fn handle_conn(addr: SocketAddr, connection: TcpStream, content: Arc<[u8]>
     }
 }
 
-fn run_server(port: u16, content: Vec<u8>) -> Result<(), Error> {
+fn run_server(listen: IpAddr, port: u16, content: Vec<u8>) -> Result<(), Error> {
     let content: Arc<[u8]> = Arc::from(content);
     RUNTIME.block_on(async {
         for _ in 0..ACCEPTORS {
-            let listener = TcpBuilder::new_v4()?
-                .reuse_address(true)?
+            let listener = match listen {
+                IpAddr::V4(_) => TcpBuilder::new_v4()?,
+                IpAddr::V6(_) => TcpBuilder::new_v6()?,
+            };
+            let listener = listener.reuse_address(true)?
                 .reuse_port(true)?
-                .bind((Ipv4Addr::UNSPECIFIED, port))?
+                .bind((listen, port))?
                 .listen(2048)?;
             let mut listener = TcpListener::from_std(listener, &Default::default())?;
             let content = Arc::clone(&content);
@@ -266,9 +272,9 @@ fn run() -> Result<(), Error> {
     env_logger::init();
     let command = Command::from_args();
     match command {
-        Command::Server { port, content } => {
+        Command::Server { listen, port, content } => {
             info!("Starting server on port {}", port);
-            run_server(port, get_content(content)?)?;
+            run_server(listen, port, get_content(content)?)?;
         }
         Command::Rate {
             host,
