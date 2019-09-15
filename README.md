@@ -62,6 +62,8 @@ existence of too many parallel and new connections.
   `echo 1024 65535 > /proc/sys/net/ipv4/ip_local_port_range`.
 * Allow reusing of ports in `TIME_WAIT` state:
   `echo 1 > /proc/sys/net/ipv4/tcp_tw_reuse`.
+* Raise the maximum number of waiting TCP connections on the server side:
+  `echo 20480 > /proc/sys/net/ipv4/tcp_max_syn_backlog`.
 
 Even in these settings, weird things were sometimes happening, eg:
 * Some connections were getting resetted.

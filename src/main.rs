@@ -156,7 +156,7 @@ fn run_server(listen: IpAddr, port: u16, content: Vec<u8>) -> Result<(), Error> 
             let listener = listener.reuse_address(true)?
                 .reuse_port(true)?
                 .bind((listen, port))?
-                .listen(2048)?;
+                .listen(20480)?;
             let mut listener = TcpListener::from_std(listener, &Default::default())?;
             let content = Arc::clone(&content);
             tokio::spawn(async move {
