@@ -3,8 +3,7 @@ name = "tspam"
 version = "0.1.0"
 authors = ["Michal 'vorner' Vaner <vorner@vorner.cz>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "Apache-2.0/MIT"
 
 [dependencies]
 env_logger = "~0.6"
