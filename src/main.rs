@@ -13,8 +13,11 @@ use std::time::{Duration, Instant};
 
 use err_derive::Error;
 use log::{debug, error, info, warn};
+use net2::TcpBuilder;
+use net2::unix::UnixTcpBuilderExt;
 use once_cell::sync::Lazy;
 use structopt::StructOpt;
+use tokio::future;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 use tokio::runtime::Runtime;
@@ -22,6 +25,7 @@ use tokio::sync::mpsc::{self, Sender};
 use tokio::timer;
 
 const TIMEOUT: Duration = Duration::from_secs(15);
+const ACCEPTORS: usize = 4;
 static RUNTIME: Lazy<Runtime> = Lazy::new(|| Runtime::new().unwrap());
 
 #[derive(Debug, Error)]
@@ -141,18 +145,29 @@ async fn handle_conn(addr: SocketAddr, connection: TcpStream, content: Arc<[u8]>
 fn run_server(port: u16, content: Vec<u8>) -> Result<(), Error> {
     let content: Arc<[u8]> = Arc::from(content);
     RUNTIME.block_on(async {
-        let mut listener = TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), port)).await?;
-        loop {
-            match listener.accept().await {
-                Ok((connection, address)) => {
-                    debug!("Accepted connection from {}", address);
-                    tokio::spawn(handle_conn(address, connection, Arc::clone(&content)));
+        for _ in 0..ACCEPTORS {
+            let listener = TcpBuilder::new_v4()?
+                .reuse_address(true)?
+                .reuse_port(true)?
+                .bind((Ipv4Addr::UNSPECIFIED, port))?
+                .listen(2048)?;
+            let mut listener = TcpListener::from_std(listener, &Default::default())?;
+            let content = Arc::clone(&content);
+            tokio::spawn(async move {
+                loop {
+                    match listener.accept().await {
+                        Ok((connection, address)) => {
+                            debug!("Accepted connection from {}", address);
+                            tokio::spawn(handle_conn(address, connection, Arc::clone(&content)));
+                        }
+                        Err(e) => {
+                            warn!("Failed to accept connection: {}", e);
+                        }
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to accept connection: {}", e);
-                }
-            }
+            });
         }
+        future::pending().await
     })
 }
 
