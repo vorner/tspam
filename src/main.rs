@@ -25,7 +25,6 @@ use tokio::sync::mpsc::{self, Sender};
 use tokio::timer;
 
 const TIMEOUT: Duration = Duration::from_secs(15);
-const ACCEPTORS: usize = 4;
 static RUNTIME: Lazy<Runtime> = Lazy::new(|| Runtime::new().unwrap());
 
 #[derive(Debug, Error)]
@@ -49,6 +48,11 @@ enum Command {
         /// File with a content to send back. Nothing sent if missing.
         #[structopt(short = "c", long = "content", parse(from_os_str))]
         content: Option<PathBuf>,
+        /// Number of listen sockets and tasks.
+        ///
+        /// Raising this might be needed in high-performance scenarios.
+        #[structopt(short = "a", long = "acceptors", default_value = "1")]
+        acceptors: usize,
     },
     /// Run in client mode, with provided rates to test with.
     ///
@@ -157,17 +161,19 @@ async fn handle_conn(addr: SocketAddr, connection: TcpStream, content: Arc<[u8]>
     }
 }
 
-fn run_server(listen: IpAddr, port: u16, content: Vec<u8>) -> Result<(), Error> {
+fn run_server(listen: IpAddr, port: u16, acceptors: usize, content: Vec<u8>) -> Result<(), Error> {
     let content: Arc<[u8]> = Arc::from(content);
     RUNTIME.block_on(async {
-        for _ in 0..ACCEPTORS {
+        for _ in 0..acceptors {
             let listener = match listen {
                 IpAddr::V4(_) => TcpBuilder::new_v4()?,
                 IpAddr::V6(_) => TcpBuilder::new_v6()?,
             };
+            if acceptors > 1 {
+                listener.reuse_port(true)?;
+            }
             let listener = listener
                 .reuse_address(true)?
-                .reuse_port(true)?
                 .bind((listen, port))?
                 .listen(20480)?;
             let mut listener = TcpListener::from_std(listener, &Default::default())?;
@@ -315,9 +321,10 @@ fn run() -> Result<(), Error> {
             listen,
             port,
             content,
+            acceptors,
         } => {
             info!("Starting server on port {}", port);
-            run_server(listen, port, get_content(content)?)?;
+            run_server(listen, port, acceptors, get_content(content)?)?;
         }
         Command::Rate {
             host,
