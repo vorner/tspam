@@ -1,0 +1,107 @@
+HTTP/1.1 200 OK
+Date: Mon, 16 Sep 2019 12:04:04 GMT
+Server: Apache/2.4.25 (Debian)
+Last-Modified: Thu, 09 Feb 2017 19:51:53 GMT
+ETag: "142d-5481e501e8f00"
+Accept-Ranges: bytes
+Content-Length: 5165
+Vary: Accept-Encoding
+Content-Type: text/html; charset=UTF-8
+
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html lang='cs'>
+	<head>
+		<meta name='author' content='Michal "vorner" Vaner'>
+		<meta name='keywords' content='Michal Vaner, vorner, programov..n.., dom..c.. str..nky'>
+		<meta name='description' content='Vornerovy osobn.. str..nky'>
+		
+		<link rel='stylesheet' type='text/css' media='screen' href='/screen.css'>
+		<link rel='stylesheet' type='text/css' media='print' href='/print.css'>
+		<title>Michal 'vorner' Vaner - Osobn.. str..nky</title>
+	</head>
+	<body>
+		<div class='main-head'><h1>Michal 'vorner' Vaner - Osobn.. str..nky</h1></div>
+<div class='menu'><ul>
+	<li><a href='index.html'>Hlavn.. Str..nka</a>
+<ul>
+	<li><a href='index.html#contact'>Kontakt</a>
+	<li><a href='index.html#about'>O Str..nk..ch</a>
+	</ul>
+	<li>Jazykov.. Mutace
+<ul>
+	<li><a href='/'>..esky</a>
+	<li><a href='/en'>English</a>
+	</ul>
+	<li><a href='/blog'>Blog</a>
+	<li><a href='projects.html'>Projekty</a>
+	<li><a href='pending.html'>P..ipravovan.. Projekty</a>
+	<li><a href='articles.html'>..l..nky</a>
+	<li><a href='download.html'>Download</a>
+	<li><a href='foto.html'>Fotky</a>
+	<li>MFF
+<ul>
+	<li><a href='vyuka/'>V..uka</a>
+	<li><a href='prednasky.html'>Z..pisky</a>
+	<li><a href='matfyz1.html'>Z....itky z prv..ku</a>
+	<li><a href='mathowto.html'>Jak na Matfyz</a>
+	</ul>
+	<li><a href='openvylet.html'>OpenV..let</a>
+</ul></div><div id='main' class='main'>
+<div class='snippet' id='me'>
+<h2>O m..</h2>
+<p>
+V..t..ina lid.., kte.... najdou tuto str..nku, m.. u.. znaj... Pro ty ostatn.., jsem
+program..tor s asi trochu zvl....tn..m smyslem pro humor. R..d se pohybuji v p....rod..,
+a to jak vodorovn.. po sv..ch tak svisle za asistence lana.
+<p>
+Zam..stn..n.. aktu..ln.. nechci (nebo.. jedno m..m), na n..jak.. men.... projekty,
+konzutace, kurzy a podobn.. v..ci se nech..m p..emluvit. Z..jemci o takov.. v..ci si
+mohou pro....st <a href='/download/cv.pdf'>..ivotopis</a>.
+</div>
+<div class='snippet' id='contact'>
+<h2>Kontakt</h2>
+<p>
+	M....e.. m.. kontaktovat mnoha r..zn..mi zp..soby, z nich.. n..kter.. jsou vyjmenovan.. zde.
+<ul>
+	<li><strong>Osobn..</strong>: n..kde m.. potkej. Abys m.. poznal, tak vypad..m asi <a href='cert.jpg'>takle</a> (ne v..dy ale o sebe takle db..m).
+	<li><strong>Email</strong>: <a href='mailto:vorner@vorner.cz'>vorner@vorner.cz</a>.
+	<li><strong>Jabber/XMPP</strong>: <a href='xmpp:vorner@vorner.cz?message;type=chat'>vorner@vorner.cz</a>
+	(<a href='xmpp:vorner@vorner.cz?roster;name=vorner'>p..idat do kontaktlistu</a>).
+	<li><strong>Telefon</strong>: <a href='sip:vorner@vorner.cz'>vorner@vorner.cz</a> (nebo +420 776 140 487, pro ty, kdo nepodporuj.. modern.. technologie).
+</ul>
+<p>
+	N..kter.. z t..chto zp..sob.. umo....uj.. ..ifrov..n.. pomoc.. PGP. Pokud pos..l.... cokoliv d..v..rn..ho (hesla, ....sla bankovn..ch ....t.., pl..ny na z..chranu sv..ta p..ed Microsoftem...), vyu..ij t..to mo..nosti.
+	Fingerprint m..ho <a href='/pubkey.pgp'>ve..ejn..ho kl....e</a> je 460B 4CF5 E995 864B 71D7  19B7 8CB8 0BB7 F823 3AEA.
+<p>
+	Rozhodn.. mi nepi.. na adresu <a href='mailto:vorner@uu.ucw.cz'>vorner@uu.ucw.cz</a>, ta adresa je nebezpe..n.., stejn.. jako v..echny na <a href='http://mj.ucw.cz/bait/'>t..to</a> str..nce.
+<p>
+	Co se t....e zach..zen.. s t..mito kontakty: pokud m.... skv..l.. n..pad mi poslat pozv..nku na n..jakou n..hodnou internetovou
+	aplikaci, bez kter.. nemohu ....t, ..i n..co podobn..ho, ud..lej tak <strong>nap....mo</strong> ... pokud vypln.... moji emailovou
+	adresu do n..jak..ho ok..nka na t..to n..hodn.. aplikaci na rozes..l..n.. spamu, uv..dom si, ..e t..m:
+<ul>
+	<li>Poru...... z..kon, nebo.. se na emailov.. adresy vztahuje ochrana osobn..ch ..daj...
+	<li>Chov.... se jako ovce, kter.. nep..em....l.. a ud..l.. cokoliv, co ti n..kdo nap....e. Pokud je tomu opravdu tak, pros..m po..li
+	sv.. ....slo ....tu a heslo do internetov..ho bankovnictv.. na n..kter.. z v....e uveden..ch kontakt...
+	<li>Po....dn.. m.. t..m na..tve.. a pokud zjist..m, ..e jsi to byl ty, pravd..podobn.. ti p..kn.. od srdce ..eknu, co si o tom mysl..m.
+</ul>
+</div>
+<div class='snippet' id='about'>
+<h2>O str..nk..ch</h2>
+<p>
+	Tyto str..nky byly vytvo..eny za pomoci editoru <a href='http://www.vim.org/'>Vim</a>, n..stroje <a href='http://www.gnu.org/software/make/'>GNU make</a> a n..kolika skript.. v <a href='http://www.gnu.org/software/bash/'>Bash</a>i a <a href='http://www.perl.com/'>Perl</a>u.
+	Pokud stoj.... o jejich p..vodn.. zdrojovou podobu, tak si nap..ed rozmysli, jestli opravdu chce.. ....st hieroglyfy v Perlu a pokud ano, pak mi napi...
+<p>
+	Najde..-li zde chybu gramatickou, stylistickou, v..cnou, syntaktickou ..i jinou, napi.. mi EMail.
+	Pokud ti ale str..nky nefunguj.. v hr..ze zvan.. Internet Explorer, pak nepi.. mn.., ale:
+<ul>
+	<li>Napi.. Microsoftu, aby tu v..c opravil
+	<li>Se..e.. si prohl....e.., nap....klad <a href='http://www.firefox.cz/'>Mozilla Firefox</a>
+<p>
+	Neposkytuji ....dnou z..ruku na aktu..lnost, pravdivost nebo u..ite..nost
+	informac.. nalezen..ch na t..chto str..nk..ch. Jednodu..e, mnoh.. bylo naps..no
+	p..ed lety a od t.. doby jsem to po sob.. ne..etl.
+</ul>
+</div>
+		</div>
+	</body>
+</html>

@@ -1,0 +1,5 @@
+GET / HTTP/1.1
+Host: vorner.cz
+User-Agent: curl/7.66.0
+Accept: */*
+
