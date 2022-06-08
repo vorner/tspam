@@ -2,27 +2,27 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs;
 use std::io::Error as IoError;
 use std::mem;
-use std::net::{IpAddr, Shutdown, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::process;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use err_derive::Error;
+use futures::future;
 use log::{debug, error, info, warn};
 use net2::unix::UnixTcpBuilderExt;
 use net2::TcpBuilder;
 use once_cell::sync::Lazy;
 use structopt::StructOpt;
-use tokio::future;
+use tokio::io::{self, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::prelude::*;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
-use tokio::timer;
+use tokio::time::{self, Instant};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
 const ACCEPTORS: usize = 4;
@@ -146,7 +146,7 @@ impl AsyncWrite for Sink {
 }
 
 async fn handle_conn_inner(mut connection: TcpStream, content: Arc<[u8]>) -> Result<(), Error> {
-    connection.copy(&mut Sink).await?;
+    io::copy(&mut connection, &mut Sink).await?;
     connection.write_all(&content).await?;
     Ok(())
 }
@@ -170,7 +170,7 @@ fn run_server(listen: IpAddr, port: u16, content: Vec<u8>) -> Result<(), Error> 
                 .reuse_port(true)?
                 .bind((listen, port))?
                 .listen(20480)?;
-            let mut listener = TcpListener::from_std(listener, &Default::default())?;
+            let listener = TcpListener::from_std(listener)?;
             let content = Arc::clone(&content);
             tokio::spawn(async move {
                 loop {
@@ -193,9 +193,12 @@ fn run_server(listen: IpAddr, port: u16, content: Vec<u8>) -> Result<(), Error> 
 async fn connect_inner(
     server: SocketAddr,
     content: Arc<[u8]>,
-    ip: Option<IpAddr>,
+    _ip: Option<IpAddr>,
 ) -> Result<Duration, Error> {
     let start = Instant::now();
+    let mut connection = TcpStream::connect(server).await?;
+    /*
+     * FIXME: The async connect with bound local address doesn't seem to be available? :-(
     let mut connection = match ip {
         None => TcpStream::connect(server).await?,
         Some(IpAddr::V4(addr)) => {
@@ -207,9 +210,10 @@ async fn connect_inner(
             TcpStream::connect_std(stream, &server, &Default::default()).await?
         }
     };
+    */
     connection.write_all(&content).await?;
-    connection.shutdown(Shutdown::Write)?;
-    connection.copy(&mut Sink).await?;
+    connection.shutdown().await?;
+    io::copy(&mut connection, &mut Sink).await?;
     Ok(start.elapsed())
 }
 
@@ -217,9 +221,9 @@ async fn connect(
     server: SocketAddr,
     content: Arc<[u8]>,
     ip: Option<IpAddr>,
-    mut results: Sender<Duration>,
+    results: Sender<Duration>,
 ) {
-    let connect = connect_inner(server, content, ip).timeout(TIMEOUT);
+    let connect = time::timeout(TIMEOUT, connect_inner(server, content, ip));
     match connect.await {
         Ok(Ok(duration)) => results
             .send(duration)
@@ -248,7 +252,7 @@ async fn generator(
     let interval = Duration::from_secs(1) / rate;
     let start = Instant::now();
     for i in 0..cnt {
-        timer::delay(start + i * interval).await;
+        time::sleep_until(start + i * interval).await;
         debug!("Starting connection #{}", i);
         let ip = if local_ips.is_empty() {
             None
@@ -287,10 +291,13 @@ fn run_rate(
     local_ips: Arc<[IpAddr]>,
 ) -> Result<Result<Latency, NoSamples>, Error> {
     RUNTIME.block_on(async {
-        let (sender, receiver) = mpsc::channel(10);
+        let (sender, mut receiver) = mpsc::channel(10);
         tokio::spawn(generator(server, rate, cnt, content, local_ips, sender));
         // TODO: Better computation of stats
-        let mut results: Vec<Duration> = receiver.collect().await;
+        let mut results = Vec::new();
+        while let Some(duration) = receiver.recv().await {
+            results.push(duration);
+        }
         results.sort();
         if results.is_empty() {
             Ok(Err(NoSamples))
